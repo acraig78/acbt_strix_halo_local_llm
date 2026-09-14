@@ -103,6 +103,52 @@ Vulkan wins both metrics (prefill +12.2%, gen +15.2%) — same pattern as Qwen3.
 chosen: Vulkan.** This is the best generation throughput of any model benchmarked on this machine —
 consistent with it being a clean plain-MoE with no DeltaNet overhead.
 
+### Granite 4.2 3B (dense, `Q6_K`, 2.80 GiB, 3.66B params)
+
+| Backend | Prefill (pp512) | Gen (tg128) |
+|---|---|---|
+| Vulkan | 1666.45 ± 18.38 t/s | 42.76 ± 0.09 t/s |
+| ROCm/HIP | 989.05 ± 13.67 t/s | 31.67 ± 0.08 t/s |
+
+Vulkan wins both metrics decisively (prefill +68%, gen +35%). **Backend chosen: Vulkan.**
+
+### Granite 4.2 8B (dense, `Q6_K`, 6.72 GiB, 8.79B params)
+
+| Backend | Prefill (pp512) | Gen (tg128) |
+|---|---|---|
+| Vulkan | 701.13 ± 4.49 t/s | 21.98 ± 0.02 t/s |
+| ROCm/HIP | 505.54 ± 3.77 t/s | 18.51 ± 0.04 t/s |
+
+Vulkan wins both metrics (prefill +39%, gen +19%). **Backend chosen: Vulkan.** Unlike the other
+dense models on this machine (Gemma 4 31B, Qwen3.8-27B), which favor HIP on prefill, both Granite
+models favor Vulkan across the board — likely a scale effect (these are the two smallest models
+benchmarked here, well under the ~20GiB+ size of the other dense/dense-ish models), or an
+architecture/kernel-tuning difference specific to Granite's dense transformer implementation. Not
+investigated further.
+
+### Gemma 4 12B (dense, `UD-Q6_K_XL`, 9.94 GiB, 11.91B params)
+
+| Backend | Prefill (pp512) | Gen (tg128) |
+|---|---|---|
+| Vulkan | 636.61 ± 2.84 t/s | 18.66 ± 0.01 t/s |
+| ROCm/HIP | 763.68 ± 7.05 t/s | 19.03 ± 0.02 t/s |
+
+ROCm wins prefill by ~20%; generation is essentially tied (+2%, within noise). Same dense pattern as
+Gemma 4 31B and Qwen3.8-27B. **Backend chosen: HIP.**
+
+### Gemma 4 E4B (dense/elastic, `UD-Q6_K_XL`, 6.93 GiB, 7.52B params)
+
+| Backend | Prefill (pp512) | Gen (tg128) |
+|---|---|---|
+| Vulkan | 1921.73 ± 6.95 t/s | 44.86 ± 0.02 t/s |
+| ROCm/HIP | 1568.07 ± 26.66 t/s | 42.37 ± 0.01 t/s |
+
+Vulkan wins both metrics (prefill +22.5%, gen +5.9%) — same as the small Granite models rather than
+the larger dense Gemma/Qwen pattern. Reinforces the small-model-favors-Vulkan hypothesis noted under
+Granite 4.2 8B: E4B (6.93 GiB) is closer in size to the two Granite models (2.80/6.72 GiB) than to
+Gemma 4 12B (9.94 GiB) or any of the ~20GiB+ models, and it's the only other model under ~10GiB
+benchmarked here. **Backend chosen: Vulkan.**
+
 ## Cross-model comparison
 
 Same quant (`UD-Q6_K_XL`), same backend where possible, full GPU offload:
@@ -114,6 +160,10 @@ Same quant (`UD-Q6_K_XL`), same backend where possible, full GPU offload:
 | Qwen3.8-27B (dense-ish+DeltaNet) | 23.55 GiB | 27.32B | ~27B | 343.43 t/s (HIP) | 8.67 t/s (either) |
 | Qwen3.6-35B-A3B (MoE+DeltaNet) | 29.65 GiB | 34.66B | ~3B | 1019.51 t/s (Vulkan) | 55.75 t/s (Vulkan) |
 | Qwen3-Coder-30B-A3B (plain MoE) | 24.53 GiB | 30.53B | ~3B | 1118.66 t/s (Vulkan) | 66.75 t/s (Vulkan) |
+| Granite 4.2 3B (dense) | 2.80 GiB | 3.66B | 3.66B | 1666.45 t/s (Vulkan) | 42.76 t/s (Vulkan) |
+| Granite 4.2 8B (dense) | 6.72 GiB | 8.79B | 8.79B | 701.13 t/s (Vulkan) | 21.98 t/s (Vulkan) |
+| Gemma 4 12B (dense) | 9.94 GiB | 11.91B | 11.91B | 763.68 t/s (HIP) | 19.03 t/s (HIP) |
+| Gemma 4 E4B (dense/elastic) | 6.93 GiB | 7.52B | 7.52B | 1921.73 t/s (Vulkan) | 44.86 t/s (Vulkan) |
 
 MoE sparse activation gives roughly 5-6x the generation throughput of the dense/dense-ish models
 despite similar on-disk size, because only a few billion of the total parameters are active per
@@ -132,6 +182,10 @@ Gemma 4 31B, not the sparse-MoE Qwen3.6/Gemma-26B-A4B numbers.
 | Qwen3.6-35B-A3B | Vulkan | Wins both prefill and gen |
 | Qwen3.8-27B | HIP | Wins prefill by ~66%; gen exact tie |
 | Qwen3-Coder-30B-A3B | Vulkan | Wins prefill by ~12%, gen by ~15% |
+| Granite 4.2 3B | Vulkan | Wins prefill by ~68%, gen by ~35% |
+| Granite 4.2 8B | Vulkan | Wins prefill by ~39%, gen by ~19% |
+| Gemma 4 12B | HIP | Wins prefill by ~20%; gen tied |
+| Gemma 4 E4B | Vulkan | Wins prefill by ~23%, gen by ~6% |
 
 Pattern observed: **dense/dense-ish models favor HIP** (wins prefill decisively, generation tied);
 **sparse-MoE models mostly favor Vulkan** — clearly for both Qwen MoE models, for generation only
@@ -140,6 +194,14 @@ Qwen models (Qwen3.6-35B-A3B and Qwen3-Coder-30B-A3B) land in a similar performa
 (~1000-1100 t/s prefill, ~55-67 t/s gen on Vulkan) despite one carrying DeltaNet hybrid attention
 and the other not — reinforcing that DeltaNet itself is no longer a meaningful bottleneck on this
 build, sparsity is what drives throughput.
+
+The two Granite models and Gemma 4 E4B break the "dense favors HIP" pattern above — all three are
+dense yet win decisively on Vulkan, on both metrics. They're also the three smallest models
+benchmarked on this machine (2.80 / 6.72 / 6.93 GiB vs. ~10GiB+ for everything else), so this may be
+a small-model effect (e.g. HIP's kernel launch/dispatch overhead dominating at this scale) rather
+than an architecture-specific effect. Gemma 4 12B (9.94 GiB), the next size up, reverts to the usual
+HIP-favors-prefill dense pattern, consistent with a size-based threshold somewhere between ~7 and
+~10 GiB on this hardware/build — not investigated further.
 
 No single backend wins uniformly across models on this hardware — always benchmark each model
 individually rather than assuming one backend is categorically better.

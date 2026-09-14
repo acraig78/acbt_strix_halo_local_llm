@@ -13,10 +13,19 @@ llama-swap for model-switching, with an OpenCode client wired up for agentic cod
 | Qwen3.6-35B-A3B | `unsloth/Qwen3.6-35B-A3B-GGUF` | MoE, hybrid Gated-DeltaNet + Attention | High-quality general purpose |
 | Qwen3.8-27B | `unsloth/Qwen3.8-27B-GGUF` | Hybrid Gated-DeltaNet + Attention, vision-capable | General purpose, vision |
 | Qwen3-Coder-30B-A3B | `unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF` | Plain MoE | Tool-calling / OpenCode driver |
+| Granite 4.2 3B | `ibm-granite/granite-4.2-3b-GGUF` | Dense transformer (reasoning) | Small/fast general-purpose |
+| Granite 4.2 8B | `ibm-granite/granite-4.2-8b-GGUF` | Dense transformer (reasoning) | Mid-size general-purpose |
+| Gemma 4 12B | `unsloth/gemma-4-12b-it-GGUF` | Dense transformer | Small/fast dense Gemma (no dense 8B exists in this lineup — closest size) |
+| Gemma 4 E4B | `unsloth/gemma-4-E4B-it-GGUF` | Dense transformer (elastic, 7.52B params) | Small/fast dense Gemma — closest actual param count to "8B" |
 
 All GGUFs are from `unsloth`, quantized at `UD-Q6_K_XL` (Unsloth Dynamic mixed-precision quant,
 ~25-30GB per model). With 128GB unified RAM this leaves generous headroom for KV cache. Use Q8_0 if
 quality matters more than headroom, or Q4_K_M to run two models loaded simultaneously.
+
+**Exception — Granite 4.2:** as of 2026-09-14, `unsloth` has not published GGUF quants for
+granite-4.2. Both Granite models use IBM's own official GGUF repos instead
+(`ibm-granite/granite-4.2-{3b,8b}-GGUF`), at the plain `Q6_K` quant — the closest match to the
+`UD-Q6_K_XL` quality level available for this family.
 
 Qwen3.6-35B-A3B and Qwen3.8-27B use Qwen's hybrid Gated-DeltaNet + Attention architecture. On a
 current (tip-of-main) llama.cpp build, `GATED_DELTA_NET` is GPU-accelerated on both Vulkan and
@@ -43,9 +52,13 @@ flowchart TB
             b3["build-vulkan<br/>qwen3.6-35b-a3b"]
             b4["build-hip<br/>qwen3.8-27b"]
             b5["build-vulkan<br/>qwen3-coder-30b-a3b"]
+            b6["build-vulkan<br/>granite-4.2-3b"]
+            b7["build-vulkan<br/>granite-4.2-8b"]
+            b8["build-hip<br/>gemma-4-12b"]
+            b9["build-vulkan<br/>gemma-4-e4b"]
         end
 
-        gguf[("~/models/*<br/>GGUF files (UD-Q6_K_XL)")]
+        gguf[("~/models/*<br/>GGUF files (UD-Q6_K_XL, Granite: Q6_K)")]
     end
 
     subgraph gpu["AMD Ryzen AI Max+ 395 (Strix Halo)"]
@@ -58,8 +71,8 @@ flowchart TB
     curl -->|"POST /v1/chat/completions"| ls
     ls -->|"spawns/routes to<br/>active model"| backends
     backends -.->|"loads on demand"| gguf
-    b1 & b4 --> hip --> igpu
-    b2 & b3 & b5 --> vk --> igpu
+    b1 & b4 & b8 --> hip --> igpu
+    b2 & b3 & b5 & b6 & b7 & b9 --> vk --> igpu
 ```
 
 `llama-swap` is the only long-running process — it starts/stops the right `llama-server` binary
@@ -234,6 +247,22 @@ uvx --from "huggingface_hub" hf download unsloth/Qwen3.8-27B-GGUF \
 # Qwen3-Coder-30B-A3B (tool-calling model for OpenCode — see Phase 7)
 uvx --from "huggingface_hub" hf download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF \
   --include "Qwen3-Coder-30B-A3B-Instruct-UD-Q6_K_XL.gguf" --local-dir ~/models/qwen3-coder-30b-a3b
+
+# Granite 4.2 3B (IBM official GGUF repo — no unsloth quant available as of 2026-09-14)
+uvx --from "huggingface_hub" hf download ibm-granite/granite-4.2-3b-GGUF \
+  --include "granite-4.2-3b-Q6_K.gguf" --local-dir ~/models/granite-4.2-3b
+
+# Granite 4.2 8B (IBM official GGUF repo — no unsloth quant available as of 2026-09-14)
+uvx --from "huggingface_hub" hf download ibm-granite/granite-4.2-8b-GGUF \
+  --include "granite-4.2-8b-Q6_K.gguf" --local-dir ~/models/granite-4.2-8b
+
+# Gemma 4 12B (small/fast dense Gemma — no dense 8B exists in the Gemma 4 lineup)
+uvx --from "huggingface_hub" hf download unsloth/gemma-4-12b-it-GGUF \
+  --include "gemma-4-12b-it-UD-Q6_K_XL.gguf" --local-dir ~/models/gemma-4-12b
+
+# Gemma 4 E4B (elastic dense, 7.52B params — closest actual param count to "8B")
+uvx --from "huggingface_hub" hf download unsloth/gemma-4-E4B-it-GGUF \
+  --include "gemma-4-E4B-it-UD-Q6_K_XL.gguf" --local-dir ~/models/gemma-4-e4b
 ```
 
 **Verify:** `hf download` resumes/verifies checksums automatically; sanity-check each file size
@@ -247,8 +276,10 @@ against the repo's listed size, and confirm only one `.gguf` landed per director
 On this hardware/build, the backend picks below were: Gemma 4 31B → HIP (wins prefill by ~33%, tied
 on generation), Gemma 4 26B-A4B → Vulkan (wins generation by ~11%), Qwen3.6-35B-A3B → Vulkan (wins
 both prefill and generation), Qwen3.8-27B → HIP (wins prefill by ~66%, tied on generation),
-Qwen3-Coder-30B-A3B → Vulkan (wins both prefill and generation). See `record.md` for the full
-benchmark data.
+Qwen3-Coder-30B-A3B → Vulkan (wins both prefill and generation), Granite 4.2 3B → Vulkan (wins both
+prefill and generation), Granite 4.2 8B → Vulkan (wins both prefill and generation), Gemma 4 12B →
+HIP (wins prefill by ~20%, gen tied), Gemma 4 E4B → Vulkan (wins prefill by ~23%, gen by ~6%). See
+`record.md` for the full benchmark data.
 
 ## Phase 6 — Serve with model-switching (llama-swap)
 
@@ -296,14 +327,46 @@ models:
       ~/llama.cpp/build-vulkan/bin/llama-server
       --model ~/models/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q6_K_XL.gguf
       --port ${PORT} -ngl 999 -fa 1 -c 262144
+
+  granite-4.2-3b:
+    cmd: >
+      ~/llama.cpp/build-vulkan/bin/llama-server
+      --model ~/models/granite-4.2-3b/granite-4.2-3b-Q6_K.gguf
+      --port ${PORT} -ngl 999 -fa 1 -c 131072
+
+  granite-4.2-8b:
+    cmd: >
+      ~/llama.cpp/build-vulkan/bin/llama-server
+      --model ~/models/granite-4.2-8b/granite-4.2-8b-Q6_K.gguf
+      --port ${PORT} -ngl 999 -fa 1 -c 131072
+
+  gemma-4-12b:
+    cmd: >
+      ~/llama.cpp/build-hip/bin/llama-server
+      --model ~/models/gemma-4-12b/gemma-4-12b-it-UD-Q6_K_XL.gguf
+      --port ${PORT} -ngl 999 -fa 1 -c 262144
+
+  gemma-4-e4b:
+    cmd: >
+      ~/llama.cpp/build-vulkan/bin/llama-server
+      --model ~/models/gemma-4-e4b/gemma-4-E4B-it-UD-Q6_K_XL.gguf
+      --port ${PORT} -ngl 999 -fa 1 -c 131072
 ```
-Contexts are set to each model's full native training length (`n_ctx_train = 262144` for all five,
-per GGUF metadata). An empirical sweep (2026-09-09) confirmed this box's 112GiB GTT / 124GiB RAM is
-not the constraint: every model loads and serves at full 262144 context with GPU-bound headroom to
-spare (worst case, Gemma 4 31B, used only ~50GiB GTT / 63GiB RAM at max context — see `record.md`
-for the full per-model numbers). The old lower `-c` values were a leftover caution, not a measured
-limit; raise past 262144 only via RoPE/YaRN context extension if needed, which trades quality for
-length and wasn't covered by this sweep.
+Contexts are set to each model's full native training length (`n_ctx_train = 262144` for the
+original five, per GGUF metadata). An empirical sweep (2026-09-09) confirmed this box's 112GiB GTT /
+124GiB RAM is not the constraint: every model loads and serves at full 262144 context with GPU-bound
+headroom to spare (worst case, Gemma 4 31B, used only ~50GiB GTT / 63GiB RAM at max context — see
+`record.md` for the full per-model numbers). The old lower `-c` values were a leftover caution, not a
+measured limit; raise past 262144 only via RoPE/YaRN context extension if needed, which trades
+quality for length and wasn't covered by this sweep.
+
+The two Granite 4.2 models have a smaller native context (`n_ctx_train = 131072`, per GGUF metadata)
+and are set to their own native max — well within the headroom the sweep already established, so no
+separate sweep was run for them.
+
+Gemma 4 12B shares the 262144 native context of the rest of the Gemma 4 / Qwen family; Gemma 4 E4B's
+native context is 131072 (same as the Granite models) — both set to their own native max, same
+reasoning as above.
 
 Run it: `~/bin/llama-swap --config ~/.config/llama-swap/config.yaml --listen :8080`
 
@@ -391,6 +454,22 @@ Add a provider block to `opencode.json` (project-local) or `~/.config/opencode/o
         "qwen3-coder-30b-a3b": {
           "name": "Qwen3-Coder-30B-A3B (local)",
           "limit": { "context": 262144, "output": 8192 }
+        },
+        "granite-4.2-3b": {
+          "name": "Granite 4.2 3B (local)",
+          "limit": { "context": 131072, "output": 8192 }
+        },
+        "granite-4.2-8b": {
+          "name": "Granite 4.2 8B (local)",
+          "limit": { "context": 131072, "output": 8192 }
+        },
+        "gemma-4-12b": {
+          "name": "Gemma 4 12B (local)",
+          "limit": { "context": 262144, "output": 8192 }
+        },
+        "gemma-4-e4b": {
+          "name": "Gemma 4 E4B (local)",
+          "limit": { "context": 131072, "output": 8192 }
         }
       }
     }
@@ -402,8 +481,9 @@ The keys under `models` must exactly match the model names llama-swap advertises
 relying on this; a mismatched ID gets a 404 from llama-swap instead of a response.
 
 `limit.context`/`limit.output` should match (or stay under) each model's actual served `-c` size
-from `config.yaml` — now 262144 for all five (native max; not resource-constrained on this hardware,
-see the context-window sweep note above and `record.md`).
+from `config.yaml` — 262144 (native max) for the original five plus Gemma 4 12B, 131072 (native max)
+for the two Granite 4.2 models plus Gemma 4 E4B; not resource-constrained on this hardware, see the
+context-window sweep note above and `record.md`.
 
 For tool-calling-heavy OpenCode sessions (agentic edits, running commands), use
 **`qwen3-coder-30b-a3b`** — it's the model in this set built specifically for tool use.
@@ -422,3 +502,10 @@ For tool-calling-heavy OpenCode sessions (agentic edits, running commands), use
   llama.cpp to catch any regression, since gfx1151 kernel work is still active upstream.
 - **Qwen3-Coder-30B-A3B**: plain MoE, confirmed the best generation throughput of any model on
   this machine (66.75 t/s on Vulkan). Use it as the tool-calling model for OpenCode.
+- **Granite 4.2 3B / 8B**: small dense transformers, clean GPU-bound inference on Vulkan (won both
+  prefill and generation on both models). Useful as fast, low-footprint options — e.g. quick
+  drafting or a lightweight judge/classifier role — where the larger models' quality isn't needed.
+- **Gemma 4 12B / E4B**: added as small/fast dense Gemma options (no dense 8B exists in the Gemma 4
+  lineup). 12B follows the usual dense pattern (favors HIP on prefill, tied on generation); E4B
+  (7.52B params — the closest actual match to "8B" of anything in this set) favors Vulkan on both
+  metrics, like the small Granite models.
