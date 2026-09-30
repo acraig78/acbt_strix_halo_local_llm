@@ -167,3 +167,22 @@ Update `PLAN.md` and `record.md` together (both are kept in sync as a pair, not 
   backend-selection summary table row, and a sentence in the pattern-analysis prose if the new
   model's backend result confirms or breaks the established pattern (worth calling out either way —
   breaking a stated pattern is exactly the kind of thing a future reader needs flagged).
+
+## Updating llama.cpp
+
+Build the new version **in the final directory names**; never `mv` a CMake build directory. The
+binaries embed an absolute RUNPATH and the CMake cache records its own path, so a renamed build dir
+fails with `libllama-bench-impl.so: cannot open shared object file` and can't be rebuilt
+incrementally. To keep a rollback, copy the old dir aside only as a reference, not for running.
+
+```bash
+systemctl --user stop llama-swap
+cd ~/llama.cpp && git pull
+rm -rf build-vulkan build-hip   # or benchmark old vs new first via build-*-new, then rebuild in place
+cmake -B build-vulkan -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-vulkan --config Release -j$(nproc)
+cmake -B build-hip -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1151 -DCMAKE_BUILD_TYPE=Release -DGGML_HIP_ROCWMMA_FATTN=ON && cmake --build build-hip --config Release -j$(nproc)
+systemctl --user start llama-swap
+```
+
+Verify with `llama-server --version` and `readelf -d build-*/bin/llama-server | grep RUNPATH`, then
+re-benchmark (see `record.md` for the baseline) and record the results.

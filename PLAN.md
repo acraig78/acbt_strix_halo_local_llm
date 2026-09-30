@@ -145,7 +145,9 @@ sudo pacman -S vulkan-radeon vulkan-tools vulkan-icd-loader mesa
 # Vulkan shader toolchain — required by llama.cpp's Vulkan build
 # (ggml-vulkan's CMakeLists does find_package(SPIRV-Headers); without this, Phase 3's Vulkan
 # cmake configure fails with "Could not find a package configuration file provided by SPIRV-Headers")
-sudo pacman -S spirv-headers spirv-tools shaderc
+sudo pacman -S spirv-headers spirv-tools shaderc vulkan-headers
+# vulkan-headers often shows as an orphan (nothing else needs it); keep it from being cleaned up:
+sudo pacman -D --asexplicit vulkan-headers
 
 # ROCm/HIP
 sudo pacman -S rocm-hip-sdk rocm-smi-lib rocminfo

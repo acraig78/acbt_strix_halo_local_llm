@@ -233,3 +233,25 @@ resources.
 a result (previous values — 32768/65536 — were an unmeasured caution, not an observed limit).
 Pushing past 262144 would require RoPE/YaRN context extension (quality trade-off, untested here),
 not more memory.
+
+## llama.cpp upgrade: b10858 → b11311 (2026-09-30)
+
+Upgraded from `64e9bceb2` (2026-09-08) to `f7b384c1e` (2026-09-30), 453 commits. Toolchain: system
+Vulkan headers/loader 1.4.357, `glslc` from shaderc 2026.3, GCC 16.2.1. Old build rebuilt from the
+same commands as `PLAN.md` Phase 3. Same `llama-bench -ngl 999 -fa 1`; "old" numbers are fresh
+re-runs of the previous build, except Qwen3-Coder (recorded baseline).
+
+| Model (backend) | pp512 old → new | tg128 old → new |
+|---|---|---|
+| Qwen3.6-35B-A3B (Vulkan) | 1038.02 → 1362.55 (+31%) | 56.33 → 56.07 (flat) |
+| Gemma 4 26B-A4B (Vulkan) | 1103.41 → 1450.12 (+31%) | 49.48 → 49.80 (flat) |
+| Qwen3-Coder-30B-A3B (Vulkan) | 1118.66 → 1364.74 (+22%) | 66.75 → 68.04 (+1.9%) |
+| Gemma 4 31B (HIP) | 296.32 → 299.45 (+1%) | 7.68 → 7.71 (flat) |
+
+**Finding:** the Vulkan MoE models gain ~22-31% prefill, most likely from MoE-aware `mat_mul_id` tile
+selection (#29182) and GDN kernel tuning (#29476); generation is unchanged (bandwidth-bound). HIP
+is unchanged. Not re-benchmarked on the new build: Qwen3.8-27B, Gemma 4 12B/E4B, Granite 4.2. The
+backend-selection summary above is unchanged but was not re-verified for those models.
+
+**Gotcha:** moving build directories (`mv build-vulkan-new build-vulkan`) broke the binaries'
+RUNPATH; fixed by a clean rebuild in the final directories (see `SOP.md`, "Updating llama.cpp").
